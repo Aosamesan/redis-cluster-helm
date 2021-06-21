@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Chart.Name }}-redis-master-sts
+spec:
+  selector:
+    matchLabels: {{ include "redis-cluster.selectMasterOnly" . | nindent 6 }}
+  serviceName: {{ include "redis-cluster.headlessService" . }}
+  replicas: {{ .Values.masters }}
+  template:
+    metadata:
+      labels:
+        app: redis
+        role: master
+    spec:
+      initContainers:
+        - name: init-redis
+          image: {{ .Values.image.repository }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+          args:
+            - {{ .Values.fileConfigMapMountPath }}/init-master.sh
+          volumeMounts:
+            - name: files
+              mountPath: {{ .Values.fileConfigMapMountPath }}
+            - name: redis-master-config
+              mountPath: {{ .Values.redisConfigFilePath }}
+      containers:
+        - name: {{ .Chart.Name }}-redis-master
+          image: {{ .Values.image.repository }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+          args:
+            - {{ .Values.fileConfigMapMountPath }}/start-redis.sh
+          ports:
+          - name: redis
+            containerPort: 6379
+          volumeMounts:
+          - name: files
+            mountPath: {{ .Values.fileConfigMapMountPath }}
+          - name: redis-master-config
+            mountPath: {{ .Values.redisConfigFilePath }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - {{ .Values.fileConfigMapMountPath }}/readiness-probe-redis.sh
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: files
+          configMap:
+            name: {{ include "redis-cluster.fileConfigMap" . }}
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-master-config
+      annotations:
+        volume.alpha.kubernetes.io/storage-class: default
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Mi

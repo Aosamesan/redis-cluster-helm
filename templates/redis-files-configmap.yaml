@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-cluster.fileConfigMap" . }}
+data:
+  common.conf: |+
+    bind 0.0.0.0
+    tcp-backlog 511
+    timeout 3000
+    tcp-keepalive 300
+    daemonize no
+    supervised no
+    pidfile /var/run/redis_6379.pid
+    loglevel notice
+    logfile ""
+    slave-read-only yes
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+    appendonly yes
+  master.conf: |+
+    # configurations for masters
+  replica.conf: |+
+    # configurations for replicas
+  sentinel.conf: |+
+    # configurations for sentinels
+    bind 0.0.0.0
+    port {{ .Values.sentinelPort }}
+  fix-ip.sh: |+
+    CLUSTER_CONFIG="/data/nodes.conf"
+    if [ -f ${CLUSTER_CONFIG} ]; then
+      if [ -z "${POD_IP}" ]; then 
+        echo "Unable to determine Pod IP address!"
+        exit 1
+      fi
+      echo "Updating my IP to ${POD_IP} in ${CLUSTER_CONFIG}"
+      sed -i.bak -e "/myself/ s/[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/${POD_IP}/" ${CLUSTER_CONFIG}
+    fi
+    exec "$@"
+  init-master.sh: |+
+    cp {{ .Values.fileConfigMapMountPath }}/common.conf {{ .Values.redisConfigFilePath }}/redis.conf
+    cat {{ .Values.fileConfigMapMountPath }}/master.conf >> {{ .Values.redisConfigFilePath }}/redis.conf
+  init-replica.sh: |+
+    cp {{ .Values.fileConfigMapMountPath }}/common.conf {{ .Values.redisConfigFilePath }}/redis.conf
+    cat {{ .Values.fileConfigMapMountPath }}/replica.conf >> {{ .Values.redisConfigFilePath }}/redis.conf
+  init-sentinel.sh: |+
+    REDIS_CLI="/usr/local/bin/redis-cli"
+    cp {{ .Values.fileConfigMapMountPath }}/sentinel.conf {{ .Values.redisConfigFilePath }}/sentinel.conf
+    # 마스터들을 등록
+    for i in $(seq 0 $(({{ .Values.masters }} - 1)));
+    do
+      CURRENT_HOST="{{ .Chart.Name }}-redis-master-sts-${i}.{{ include "redis-cluster.headlessService" . }}"
+      # wait
+      while [[ -z $($REDIS_CLI -h $CURRENT_HOST info server || true) ]];
+      do
+        echo "[Redis] Wait for... $CURRENT_HOST"
+        sleep 5
+      done
+      while [[ -z $(getent hosts ${CURRENT_HOST} || true) ]];
+      do
+        echo "[IP] Wait for $CURRENT_HOST ip"
+        sleep 5
+      done
+      sleep 5
+      echo "sentinel monitor redis-cluster-master-${i} $(getent hosts ${CURRENT_HOST} | awk '{print $1}') 6379 {{ .Values.sentinelQuorum }}" >> {{ .Values.redisConfigFilePath }}/sentinel.conf
+    done
+  start-redis.sh: |+
+    REDIS_SERVER="/usr/local/bin/redis-server"
+    REDIS_CONF="{{ .Values.redisConfigFilePath }}/redis.conf"
+    bash {{ .Values.fileConfigMapMountPath }}/fix-ip.sh
+    $REDIS_SERVER $REDIS_CONF
+  start-sentinel.sh: |+
+    REDIS_CLI="/usr/local/bin/redis-cli"
+    REDIS_SENTINEL="/usr/local/bin/redis-sentinel"
+    SENTINEL_CONF="{{ .Values.redisConfigFilePath }}/sentinel.conf"
+    set -e
+    bash {{ .Values.fileConfigMapMountPath }}/fix-ip.sh
+    [[ `hostname` =~ -sentinel-sts-([0-9]+)$ ]]
+    ORDINAL=${BASH_REMATCH[1]}
+
+    # 마스터가 하나가 아니면 클러스터
+    if [[ {{ .Values.masters }} -ne 1 ]] && [[ ${ORDINAL} -eq 0 ]]; then
+      # 첫 센티넬에서 클러스터 설정
+      CLUSTERS=""
+      for i in $(seq 0 $(({{ .Values.masters }} - 1)));
+      do
+        CURRENT_HOST="{{ .Chart.Name }}-redis-master-sts-${i}.{{ include "redis-cluster.headlessService" . }}"
+        # wait
+        while [[ -z $($REDIS_CLI -h $CURRENT_HOST info server || true) ]];
+        do
+          echo "[Redis] Wait for... $CURRENT_HOST"
+          sleep 5
+        done
+        while [[ -z $(getent hosts ${CURRENT_HOST} || true) ]];
+        do
+          echo "[IP] Wait for $CURRENT_HOST ip"
+          sleep 5
+        done
+        echo ">>>>> Complete $CURRENT_HOST"
+        CLUSTERS="${CLUSTERS} $(getent hosts ${CURRENT_HOST} | awk '{print $1}'):6379"
+      done
+      for i in $(seq 0 $(({{ include "redis-cluster.replicaCount" . }} - 1)));
+      do
+        CURRENT_HOST="{{ .Chart.Name }}-redis-replica-sts-${i}.{{ include "redis-cluster.headlessService" . }}"
+        # wait
+        while [[ -z $($REDIS_CLI -h $CURRENT_HOST info server || true) ]];
+        do
+          echo "[Redis] Wait for... $CURRENT_HOST"
+          sleep 5
+        done
+        while [[ -z $(getent hosts ${CURRENT_HOST} || true) ]];
+        do
+          echo "[IP] Wait for $CURRENT_HOST ip"
+          sleep 5
+        done
+        echo ">>>>> Complete $CURRENT_HOST"
+        CLUSTERS="${CLUSTERS} $(getent hosts ${CURRENT_HOST} | awk '{print $1}'):6379"
+      done
+      $REDIS_CLI --cluster create $CLUSTERS --cluster-yes --cluster-replicas {{ .Values.replicaForEachMaster }} &
+    fi
+    sleep 10
+    $REDIS_SENTINEL $SENTINEL_CONF
+  readiness-probe-redis.sh: |+
+    REDIS_CLI="/usr/local/bin/redis-cli"
+    set -ex
+    $REDIS_CLI info server
+  readiness-probe-sentinel.sh: |+
+    REDIS_CLI="/usr/local/bin/redis-cli"
+    set -ex
+    $REDIS_CLI -p {{ .Values.sentinelPort }} info server
+
+    
