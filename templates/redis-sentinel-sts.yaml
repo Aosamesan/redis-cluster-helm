@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ .Chart.Name }}-redis-cluster-sts
+  name: {{ .Chart.Name }}-redis-sentinel-sts
 spec:
   selector:
     matchLabels: {{ include "redis-cluster.selectSentinelOnly" . | nindent 6 }}

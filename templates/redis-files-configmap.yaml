@@ -53,16 +53,17 @@ data:
       # wait
       while [[ -z $($REDIS_CLI -h $CURRENT_HOST info server || true) ]];
       do
-        echo "[Redis] Wait for... $CURRENT_HOST"
+        echo "[Redis:$(date '+%Y-%m-%d %H:%M:%S')] wait 5 seconds for redis server on : $CURRENT_HOST"
         sleep 5
       done
-      while [[ -z $(getent hosts ${CURRENT_HOST} || true) ]];
+      RESOLVED_IP=$(getent hosts ${CURRENT_HOST})
+      while [[ -z ${RESOLVED_IP} ]];
       do
-        echo "[IP] Wait for $CURRENT_HOST ip"
-        sleep 5
+        echo "[IP:$(date '+%Y-%m-%d %H:%M:%S')] wait 5 seconds for resolve hostname : $CURRENT_HOST ip"
+        sleep 10
+        RESOLVED_IP=$(getent hosts ${CURRENT_HOST})
       done
-      sleep 5
-      echo "sentinel monitor redis-cluster-master-${i} $(getent hosts ${CURRENT_HOST} | awk '{print $1}') 6379 {{ .Values.sentinelQuorum }}" >> {{ .Values.redisConfigFilePath }}/sentinel.conf
+      echo "sentinel monitor redis-cluster-master-${i} $(echo ${RESOLVED_IP} | awk '{print $1}') 6379 {{ .Values.sentinelQuorum }}" >> {{ .Values.redisConfigFilePath }}/sentinel.conf
     done
   start-redis.sh: |+
     REDIS_SERVER="/usr/local/bin/redis-server"
@@ -88,16 +89,18 @@ data:
         # wait
         while [[ -z $($REDIS_CLI -h $CURRENT_HOST info server || true) ]];
         do
-          echo "[Redis] Wait for... $CURRENT_HOST"
+          echo "[Redis:$(date '+%Y-%m-%d %H:%M:%S')] Wait for... $CURRENT_HOST"
           sleep 5
         done
-        while [[ -z $(getent hosts ${CURRENT_HOST} || true) ]];
+        RESOLVED_IP=$(getent hosts ${CURRENT_HOST})
+        while [[ -z ${RESOLVED_IP} ]];
         do
-          echo "[IP] Wait for $CURRENT_HOST ip"
-          sleep 5
+          echo "[IP:$(date '+%Y-%m-%d %H:%M:%S')] wait 5 seconds for resolve hostname : $CURRENT_HOST ip"
+          sleep 10
+          RESOLVED_IP=$(getent hosts ${CURRENT_HOST})
         done
-        echo ">>>>> Complete $CURRENT_HOST"
-        CLUSTERS="${CLUSTERS} $(getent hosts ${CURRENT_HOST} | awk '{print $1}'):6379"
+        echo ">>>>> Complete ${CURRENT_HOST} (${RESOLVED_IP})"
+        CLUSTERS="${CLUSTERS} $(echo ${RESOLVED_IP} | awk '{print $1}'):6379"
       done
       for i in $(seq 0 $(({{ include "redis-cluster.replicaCount" . }} - 1)));
       do
@@ -105,16 +108,18 @@ data:
         # wait
         while [[ -z $($REDIS_CLI -h $CURRENT_HOST info server || true) ]];
         do
-          echo "[Redis] Wait for... $CURRENT_HOST"
+          echo "[Redis:$(date '+%Y-%m-%d %H:%M:%S')] Wait for... $CURRENT_HOST"
           sleep 5
         done
-        while [[ -z $(getent hosts ${CURRENT_HOST} || true) ]];
+        RESOLVED_IP=$(getent hosts ${CURRENT_HOST})
+        while [[ -z ${RESOLVED_IP} ]];
         do
-          echo "[IP] Wait for $CURRENT_HOST ip"
-          sleep 5
+          echo "[IP:$(date '+%Y-%m-%d %H:%M:%S')] wait 5 seconds for resolve hostname : $CURRENT_HOST ip"
+          sleep 10
+          RESOLVED_IP=$(getent hosts ${CURRENT_HOST})
         done
-        echo ">>>>> Complete $CURRENT_HOST"
-        CLUSTERS="${CLUSTERS} $(getent hosts ${CURRENT_HOST} | awk '{print $1}'):6379"
+        echo ">>>>> Complete ${CURRENT_HOST} (${RESOLVED_IP})"
+        CLUSTERS="${CLUSTERS} $(echo ${RESOLVED_IP} | awk '{print $1}'):6379"
       done
       $REDIS_CLI --cluster create $CLUSTERS --cluster-yes --cluster-replicas {{ .Values.replicaForEachMaster }} &
     fi
